@@ -1,13 +1,38 @@
 # video-subtitle
 
-给视频自动加字幕，并把字幕**烧进画面**，输出「带字幕 MP4 + SRT」。
+[![CI](https://github.com/kaylon-he/video-subtitle-skill/actions/workflows/ci.yml/badge.svg)](https://github.com/kaylon-he/video-subtitle-skill/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+给视频自动加字幕，并把字幕**烧进画面**，输出「带字幕 MP4 + SRT」。
 `whisper.cpp` 负责识别、`FFmpeg + libass` 负责排版与烧录，全部在本机跑，不用上传视频、不要 API key。
 
 - 中文识别用 `large-v3` 模型，Apple Silicon 走 Metal 加速（33 秒音频约 20 秒转完）
 - 长句按「画面宽度 / 字号」自动断行，优先断在标点之后
 - 底部居中白字 + 半透明黑底框，样式接近主流短视频字幕
 - 自动挑选系统里真实存在的中文字体，避免渲染成方框
+
+![原片 vs 加字幕后](assets/before_after.png)
+
+*左：原片 ｜ 右：本工具输出 —— 长句自动断行、底部居中、半透明底框*
+
+示例成片：[Release v0.1.0](https://github.com/kaylon-he/video-subtitle-skill/releases/download/v0.1.0/demo-subtitled.mp4)
+
+## English
+
+Generate subtitles for a video and **burn them into the picture** — one command, fully offline, no API key, no Python ML stack.
+
+Pipeline: `ffmpeg` extracts a 16 kHz mono track → `whisper.cpp` (Whisper `large-v3` ggml, Metal-accelerated on Apple Silicon) transcribes it to SRT → a dependency-free script converts SRT to ASS with width-aware line breaking and CJK font selection → a libass-enabled `ffmpeg` burns the ASS back into the frame and copies the audio stream.
+
+- **Burn-in / hard subtitles**, not a separate `.srt` track — works on any player, any social platform
+- **Whisper.cpp instead of openai-whisper** — no `torch`, no model download via OpenAI CDN (that path fails its own SHA256 check often); a 33 s clip transcribes in ~20 s on M-series
+- **Auto line wrapping** — long sentences are wrapped at punctuation using the video width and font size, so nothing gets clipped at the frame edges
+- **Real font probing** — picks a CJK font that actually exists on the system, so text never renders as tofu boxes
+- **Environment-checked** — refuses to run with a stripped `ffmpeg` build that lacks libass, which is the single most common failure mode
+- Also usable as an **agent skill** (see the bottom section)
+
+Keywords: video subtitle generator, auto captions, burned-in subtitles, whisper.cpp, ffmpeg libass, whisper large-v3, offline, on-device, macOS, Chinese ASR, agent skill.
+
+一句话：本机一条命令，视频进、带字幕成片出。
 
 ## 安装
 
@@ -100,3 +125,5 @@ mkdir -p <项目>/.trae/skills && cp -R . <项目>/.trae/skills/video-subtitle
 # 全局（Trae CN）
 mkdir -p ~/.trae-cn/skills && cp -R . ~/.trae-cn/skills/video-subtitle
 ```
+
+仓库名带 `-skill` 后缀，但**安装目录必须等于 `SKILL.md` 里的 `name`**，即 `video-subtitle`；改成别的名字会被识别失败。
