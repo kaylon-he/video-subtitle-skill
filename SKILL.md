@@ -18,10 +18,12 @@ description: Add auto-generated hard subtitles to a video file or URL and output
 
 ```bash
 bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l zh
+bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l zh -e en.srt   # 中上/英下双语
 ```
 
 - `-l/--language` 源语言，默认 `zh`，可传 `auto`
 - `-f/--fontsize` 字号，默认 42
+- `-e/--en` 次语言 SRT，与主 SRT 按序号对齐，输出双语字幕
 - `-s/--srt-only` 只出 SRT，不烧录
 
 ## 必须遵守

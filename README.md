@@ -65,8 +65,27 @@ bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l zh
 | --- | --- |
 | `-l, --language` | 源语言，默认 `zh`，可传 `auto` |
 | `-f, --fontsize` | 字号，默认 42 |
+| `-e, --en` | 第二种语言的 SRT，传了就是双语：主语言在上（大）、次语言在下（小） |
 | `-s, --srt-only` | 只出 SRT，不烧录（用来先校对错字） |
 | `-o, --output` | 输出路径，默认 `<原文件名>_subtitled.mp4` |
+
+### 双语字幕
+
+先出主语言 SRT，翻译好第二种语言（两者条数一致），再用 `-e` 烧录：
+
+```bash
+# 主语言（中文，大字号）在上，英文（小字号）在下，共用一块半透明底框
+bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l zh -e en.srt --fontsize 54
+```
+
+英文按「空格」断行，不切断单词；中英按**段落序号**一一对应，条数不齐会告警并只显示主语言。
+
+也可以直接调用转换脚本，跳过转录：
+
+```bash
+python3 scripts/srt_to_ass.py --srt zh.srt --en en.srt --out bi.ass \
+  --width 1824 --height 1080 --fontsize 54 --margin-v 120
+```
 
 脚本会把转录结果打印到终端，**先看一遍再交付**：人名、地名、成语经常被识别错（实测「重阳姐」→「重阳节」、「久久重扬」→「九九重阳」）。改好 SRT 后再烧录。
 

@@ -11,6 +11,7 @@ OUT=""
 LANG_OPT="zh"
 FONTSIZE=42
 SRT_ONLY=0
+EN_SRT=""
 
 # ---- 解析参数 ----
 while [ $# -gt 0 ]; do
@@ -18,16 +19,18 @@ while [ $# -gt 0 ]; do
     -o|--output)   OUT="$2"; shift 2 ;;
     -l|--language) LANG_OPT="$2"; shift 2 ;;
     -f|--fontsize) FONTSIZE="$2"; shift 2 ;;
+    -e|--en)       EN_SRT="$2"; shift 2 ;;
     -s|--srt-only) SRT_ONLY=1; shift ;;
     -h|--help)
-      echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-s 只出字幕]"
+      echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-s 只出字幕]"
+      echo "  -e/--en 传入第二种语言的 SRT（通常是英文），输出中上/英下双语字幕；按序号与主 SRT 对齐"
       exit 0 ;;
     -*) echo "未知参数: $1" >&2; exit 2 ;;
     *)  VIDEO="$1"; shift ;;
   esac
 done
 
-[ -n "$VIDEO" ] || { echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-s 只出字幕]" >&2; exit 2; }
+[ -n "$VIDEO" ] || { echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-s 只出字幕]" >&2; exit 2; }
 [ -f "$VIDEO" ] || { echo "找不到视频文件: $VIDEO" >&2; exit 2; }
 [ -n "$OUT" ] || OUT="${VIDEO%.*}_subtitled.mp4"
 
@@ -100,9 +103,15 @@ DIM="$("$FFMPEG_BIN" -hide_banner -i "$VIDEO" 2>&1 | grep -o -E '[0-9]{2,5}x[0-9
 WIDTH="${DIM%x*}"; HEIGHT="${DIM#*x}"
 [ -n "$WIDTH" ] && [ -n "$HEIGHT" ] || { echo "错误：无法获取视频分辨率" >&2; exit 1; }
 
-echo "[3/4] 生成 ASS（${WIDTH}x${HEIGHT}，字号 ${FONTSIZE}）"
-python3 "$SKILL_DIR/scripts/srt_to_ass.py" --srt "$WORK/trans.srt" --out "$WORK/final.ass" \
-  --width "$WIDTH" --height "$HEIGHT" --fontsize "$FONTSIZE"
+echo "[3/4] 生成 ASS（${WIDTH}x${HEIGHT}，字号 ${FONTSIZE}${EN_SRT:+，双语}）"
+# 不用 ${EN_SRT:+--en "$EN_SRT"}：这种写法在展开后引号失效，路径含空格会被拆开
+if [ -n "$EN_SRT" ]; then
+  python3 "$SKILL_DIR/scripts/srt_to_ass.py" --srt "$WORK/trans.srt" --out "$WORK/final.ass" \
+    --width "$WIDTH" --height "$HEIGHT" --fontsize "$FONTSIZE" --en "$EN_SRT"
+else
+  python3 "$SKILL_DIR/scripts/srt_to_ass.py" --srt "$WORK/trans.srt" --out "$WORK/final.ass" \
+    --width "$WIDTH" --height "$HEIGHT" --fontsize "$FONTSIZE"
+fi
 
 # ---- 4. 烧录 ----
 echo "[4/4] 烧录字幕 -> $OUT"

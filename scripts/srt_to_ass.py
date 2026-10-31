@@ -7,9 +7,11 @@ srt_to_ass.py —— 把 SRT 字幕转成 ASS，用于烧录进视频。
 2. 断行优先落在中文标点之后，避免把词语切成两半。
 3. 自动挑选系统里真实存在的中文字体（macOS 上 PingFang 常不在 /System/Library/Fonts，会回退到冬青黑体）。
 4. 样式：白字 + 半透明黑色底框（BorderStyle=3）+ 底部居中。
+5. 双语：传 --en 英文 SRT，中文在上、英文在下（字号更小），共用时间轴与底框。
 
 用法：
     python3 srt_to_ass.py --srt in.srt --out out.ass --fontsize 42 --width 720 --height 1280
+    python3 srt_to_ass.py --srt zh.srt --en en.srt --out bi.ass --width 1824 --height 1080
 仅使用 Python 标准库。
 """
 
@@ -20,6 +22,9 @@ import sys
 
 # 断行时允许「断在标点之后」的字符集合（含半角，whisper 输出常混用半角标点）
 BREAK_CHARS = "，。！？；：、）】》”" + ",.!?;:"
+
+# 英文断行时优先在空格处断开
+WORD_SPLIT_RE = re.compile(r"[ \t]+")
 
 # 候选中文（CJK）字体，按优先级排列：文件路径 -> ASS 里使用的字体名
 FONT_CANDIDATES = [
@@ -97,6 +102,27 @@ def wrap_text(text, max_chars):
     return lines or [""]
 
 
+def wrap_latin(text, max_chars):
+    """英文按单词断行：不切断单词，超长单词才硬切。"""
+    words = [w for w in WORD_SPLIT_RE.split(text.strip()) if w]
+    lines, cur = [], ""
+    for w in words:
+        candidate = w if not cur else cur + " " + w
+        if len(candidate) <= max_chars:
+            cur = candidate
+            continue
+        if cur:
+            lines.append(cur)
+        # 单词本身超长（极少见），硬切成 max_chars 段
+        while len(w) > max_chars:
+            lines.append(w[:max_chars])
+            w = w[max_chars:]
+        cur = w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
 def parse_srt(path):
     """解析 SRT，返回 [(开始, 结束, 文本), ...]。"""
     with open(path, "r", encoding="utf-8-sig") as fh:
@@ -125,15 +151,34 @@ def parse_srt(path):
     return cues
 
 
-def build_ass(cues, width, height, fontsize, margin_lr, margin_v, font):
-    """生成 ASS 文本：按宽度算每行字数，逐句断行。"""
+def build_ass(cues, width, height, fontsize, margin_lr, margin_v, font,
+              en_cues=None, en_fontsize=None):
+    r"""生成 ASS 文本：按宽度算每行字数，逐句断行。
+
+    传入 en_cues 时为双语模式：中文在上（原字号），英文在下（en_fontsize，默认 0.62 倍），
+    两者用 \N 连在同一个 Dialogue 里，所以共用同一块半透明底框。
+    """
     max_chars = max(4, int((width - 2 * margin_lr) / fontsize))
     out = [HEADER.format(
         width=width, height=height, fontsize=fontsize,
         ml=margin_lr, mr=margin_lr, mv=margin_v, font=font,
     )]
-    for start, end, text in cues:
-        wrapped = "\\N".join(wrap_text(text, max_chars))
+    # 英文逐个字符约占 0.5 个字号宽度，故每行可容纳约 2 倍数目的字符
+    if en_fontsize is None:
+        en_fontsize = max(16, int(round(fontsize * 0.62)))
+    max_chars_en = max(10, int((width - 2 * margin_lr) / (en_fontsize * 0.5)))
+
+    for idx, (start, end, text) in enumerate(cues):
+        zh_lines = wrap_text(text, max_chars)
+        parts = zh_lines
+        if en_cues:
+            en_text = ""
+            if idx < len(en_cues):
+                en_text = en_cues[idx][2]
+            if en_text:
+                en_lines = wrap_latin(en_text, max_chars_en)
+                parts = zh_lines + ["{\\fs%d}%s" % (en_fontsize, ln) for ln in en_lines]
+        wrapped = "\\N".join(parts)
         out.append(
             "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n" % (start, end, wrapped)
         )
@@ -141,12 +186,13 @@ def build_ass(cues, width, height, fontsize, margin_lr, margin_v, font):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="SRT 转 ASS（CJK 友好、宽度自适应断行）")
-    ap.add_argument("--srt", required=True, help="输入 SRT 路径")
+    ap = argparse.ArgumentParser(description="SRT 转 ASS（CJK 友好、宽度自适应断行、可选双语）")
+    ap.add_argument("--srt", required=True, help="输入 SRT 路径（主语言，通常中文）")
     ap.add_argument("--out", required=True, help="输出 ASS 路径")
+    ap.add_argument("--en", help="次语言（英文）SRT 路径；提供后输出双语字幕")
     ap.add_argument("--width", type=int, default=720, help="画面宽（PlayResX）")
     ap.add_argument("--height", type=int, default=1280, help="画面高（PlayResY）")
-    ap.add_argument("--fontsize", type=int, default=42, help="字号")
+    ap.add_argument("--fontsize", type=int, default=42, help="主语言字号")
     ap.add_argument("--margin-lr", type=int, default=30, help="左右边距")
     ap.add_argument("--margin-v", type=int, default=70, help="底边距")
     ap.add_argument("--font", default="auto", help="字体名，auto 表示自动探测系统中文字体")
@@ -158,12 +204,24 @@ def main():
         print("没有从 %s 解析到字幕" % args.srt, file=sys.stderr)
         return 1
 
+    en_cues = None
+    if args.en:
+        en_cues = parse_srt(args.en)
+        if not en_cues:
+            print("没有从 %s 解析到英文字幕" % args.en, file=sys.stderr)
+            return 1
+        if len(en_cues) != len(cues):
+            print("警告：中文 %d 条 / 英文 %d 条，按序号对齐，缺失的句子只显示中文"
+                  % (len(cues), len(en_cues)), file=sys.stderr)
+
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(build_ass(
             cues, args.width, args.height, args.fontsize,
             args.margin_lr, args.margin_v, font,
+            en_cues=en_cues,
         ))
-    print("已生成 %s（%d 条字幕，字体 %s）" % (args.out, len(cues), font))
+    print("已生成 %s（%d 条字幕，字体 %s%s）" % (
+        args.out, len(cues), font, "，双语" if en_cues else ""))
     return 0
 
 
