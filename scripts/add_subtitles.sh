@@ -12,6 +12,7 @@ LANG_OPT="zh"
 FONTSIZE=42
 SRT_ONLY=0
 EN_SRT=""
+DELOGO=""
 
 # ---- 解析参数 ----
 while [ $# -gt 0 ]; do
@@ -20,17 +21,19 @@ while [ $# -gt 0 ]; do
     -l|--language) LANG_OPT="$2"; shift 2 ;;
     -f|--fontsize) FONTSIZE="$2"; shift 2 ;;
     -e|--en)       EN_SRT="$2"; shift 2 ;;
+    -w|--delogo)   DELOGO="$2"; shift 2 ;;
     -s|--srt-only) SRT_ONLY=1; shift ;;
     -h|--help)
-      echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-s 只出字幕]"
-      echo "  -e/--en 传入第二种语言的 SRT（通常是英文），输出中上/英下双语字幕；按序号与主 SRT 对齐"
+      echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-w x,y,w,h] [-s 只出字幕]"
+      echo "  -e/--en     传入第二种语言的 SRT（通常是英文），输出中上/英下双语字幕；按序号与主 SRT 对齐"
+      echo "  -w/--delogo 去除静态水印的矩形区域，格式 x,y,w,h（像素），可先用 -s 只出字幕便于测量"
       exit 0 ;;
     -*) echo "未知参数: $1" >&2; exit 2 ;;
     *)  VIDEO="$1"; shift ;;
   esac
 done
 
-[ -n "$VIDEO" ] || { echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-s 只出字幕]" >&2; exit 2; }
+[ -n "$VIDEO" ] || { echo "用法: add_subtitles.sh <视频路径> [-o 输出.mp4] [-l 语言] [-f 字号] [-e 次语言SRT] [-w x,y,w,h] [-s 只出字幕]" >&2; exit 2; }
 [ -f "$VIDEO" ] || { echo "找不到视频文件: $VIDEO" >&2; exit 2; }
 [ -n "$OUT" ] || OUT="${VIDEO%.*}_subtitled.mp4"
 
@@ -115,9 +118,22 @@ fi
 
 # ---- 4. 烧录 ----
 echo "[4/4] 烧录字幕 -> $OUT"
-"$FFMPEG_BIN" -y -v error -i "$VIDEO" -vf "ass=$WORK/final.ass" \
-  -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
-  -c:a copy -movflags +faststart "$OUT"
+if [ -n "$DELOGO" ]; then
+  # DELOGO 格式为 x,y,w,h：先抹掉水印，再对同一小块做局部模糊，最后叠字幕
+  IFS=',' read -r DX DY DW DH <<< "$DELOGO"
+  BX=$((DX - 5)); BY=$((DY - 4)); BW=$((DW + 10)); BH=$((DH + 8))
+  [ "$BX" -lt 0 ] && BX=0
+  [ "$BY" -lt 0 ] && BY=0
+  echo "     去水印区域: ${DX},${DY} ${DW}x${DH}"
+  "$FFMPEG_BIN" -y -v error -i "$VIDEO" -filter_complex \
+    "[0:v]delogo=x=${DX}:y=${DY}:w=${DW}:h=${DH},split=2[a][b];[b]crop=${BW}:${BH}:${BX}:${BY},boxblur=18:3[bl];[a][bl]overlay=${BX}:${BY},ass=${WORK}/final.ass[v]" \
+    -map "[v]" -map 0:a -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
+    -c:a copy -movflags +faststart "$OUT"
+else
+  "$FFMPEG_BIN" -y -v error -i "$VIDEO" -vf "ass=$WORK/final.ass" \
+    -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p \
+    -c:a copy -movflags +faststart "$OUT"
+fi
 
 echo "完成: $OUT"
 echo "提示：抽 2-3 帧检查字幕有没有被裁切 -> ffmpeg -ss 5 -i \"$OUT\" -frames:v 1 check.png"

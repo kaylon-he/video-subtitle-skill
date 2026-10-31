@@ -10,6 +10,7 @@
 - 长句按「画面宽度 / 字号」自动断行，优先断在标点之后
 - 底部居中白字 + 半透明黑底框，样式接近主流短视频字幕
 - 自动挑选系统里真实存在的中文字体，避免渲染成方框
+- 可选双语字幕（中文在上、英文在下）；可选清除原视频右上角的静态水印
 
 ![原片 vs 加字幕后](assets/before_after.png)
 
@@ -66,6 +67,7 @@ bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l zh
 | `-l, --language` | 源语言，默认 `zh`，可传 `auto` |
 | `-f, --fontsize` | 字号，默认 42 |
 | `-e, --en` | 第二种语言的 SRT，传了就是双语：主语言在上（大）、次语言在下（小） |
+| `-w, --delogo` | 去除静态水印的矩形区域，格式 `x,y,w,h`（像素） |
 | `-s, --srt-only` | 只出 SRT，不烧录（用来先校对错字） |
 | `-o, --output` | 输出路径，默认 `<原文件名>_subtitled.mp4` |
 
@@ -87,6 +89,25 @@ python3 scripts/srt_to_ass.py --srt zh.srt --en en.srt --out bi.ass \
   --width 1824 --height 1080 --fontsize 54 --margin-v 120
 ```
 
+### 去水印
+
+原视频右上角的账号水印，用 `-w` 给矩形区域，在烧字幕的同一次编码里处理掉：
+
+```bash
+bash scripts/add_subtitles.sh input.mp4 -o output.mp4 -l en -w 1545,72,200,88
+```
+
+坐标怎么定：先截一帧放大看。以 1824×1080 的片子为例，水印在右上角时：
+
+```bash
+ffmpeg -ss 1 -i input.mp4 -frames:v 1 -vf "crop=400:300:1424:0,scale=1200:-2" wm.png
+# 图被放大 3 倍，图上 (x, y) 换算回原图：X = 1424 + x/3，Y = y/3
+```
+
+`-w` 内部做的是 `delogo`（抹掉字形）+ 对同一小块做 `boxblur`（抹平插值留下的竖条纹）。**只上 `delogo` 会留下明显色带**，实测过；只做模糊又会把水印糊成一团青色雾，所以两者必须配合。区域四周会各扩 4–5px 再模糊，背景是失焦画面时几乎看不出痕迹。
+
+注意：水印是静态的才能这样处理；如果水印会移动或半透明叠加在大面积亮部上，效果会打折。
+
 脚本会把转录结果打印到终端，**先看一遍再交付**：人名、地名、成语经常被识别错（实测「重阳姐」→「重阳节」、「久久重扬」→「九九重阳」）。改好 SRT 后再烧录。
 
 成品建议抽 2–3 帧验证字幕没有被裁切：
@@ -106,6 +127,7 @@ ffmpeg -ss 5 -i output.mp4 -frames:v 1 check.png
 | **whisper.cpp**（`whisper-cli`） | `brew install whisper-cpp` | 语音识别，输出 SRT；Apple Silicon 走 Metal 加速 |
 | **OpenAI Whisper large-v3 权重**（`ggml-large-v3.bin`） | whisper.cpp 官方模型仓库 | 中文识别精度最高的一档模型 |
 | **libx264** | FFmpeg 内置编码器 | 烧字幕后重新编码 H.264 |
+| **`delogo` / `boxblur` 滤镜** | FFmpeg 内置（无需额外依赖） | 去除静态水印；局部模糊抹平 delogo 留下的插值条带 |
 | **AAC** | FFmpeg 内置编码器（本流程用 `-c:a copy`） | 音轨直接复制，不重新编码 |
 | **Python 3**（仅标准库） | 系统自带 | `scripts/srt_to_ass.py`：SRT → ASS，自动断行 + 选字体 |
 | **系统字体 Hiragino Sans GB / PingFang SC / STHeiti** | macOS 自带 | ASS 字幕的字体来源，脚本会自动挑选存在的那一个 |
@@ -132,6 +154,7 @@ ffmpeg -ss 5 -i output.mp4 -frames:v 1 check.png
 | `No such filter: 'subtitles'` / `ass` | ffmpeg 构建缺 libass | 换 `ffmpeg-full` 或静态构建；用上面的检查命令确认 |
 | 长句被画面左右裁掉 | ASS 自动换行失效 | 本流程用 `WrapStyle: 2` + 脚本按 `宽度/字号` 插 `\N`；仍溢出就调小 `-f` |
 | 专有名词错字（人名、成语、节日名） | ASR 固有误差 | 先 `-s` 只出 SRT 人工校对，改好后把 SRT 交给 `srt_to_ass.py` 再烧录 |
+| 水印处理后有竖条纹或色块 | 只用了 `delogo`，插值方向会留下条带；或框没覆盖发光边 | 用 `-w`，框比字形四周各留 5–10px；脚本已配局部模糊 |
 | 模型 SHA256 不匹配 | 下载中断 | 用支持断点续传的 `curl -C -` 重下 |
 
 ## 作为 Agent Skill 使用
